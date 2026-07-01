@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 
 # --- CONFIG ---
 RECIPIENT_EMAIL = os.environ["RECIPIENT_EMAIL"]
+RECIPIENT_EMAIL_CHINA = os.environ["RECIPIENT_EMAIL_CHINA"]
 GMAIL_USER = os.environ["GMAIL_USER"]
 GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
@@ -19,144 +20,109 @@ week_end = (now + timedelta(days=6)).strftime("%d %B %Y")
 
 
 def get_holidays(region_name, region_desc):
-    """Search for significant holidays in the upcoming week for a region."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    prompt = f"""Today is {today_str}.
+Find significant holidays and festivals in {region_desc} for the upcoming week ({week_start} – {week_end}).
 
-    prompt = f"""Today is {today_str}. You are a content strategist for a lifestyle brand on Instagram and Reels.
+For each significant holiday found, provide:
+📅 Name and date
+🌍 Country / region
+📖 What is this holiday — briefly
+🎨 Visual features — colors, costumes, decor, food
+📱 Content potential — why it will work on Reels/Instagram
+💡 Video idea — one specific idea
 
-Search the web for significant holidays, festivals, and celebrations in {region_desc}
-happening in the next 7 days ({week_start} – {week_end}).
+Criteria for "significant":
+- National and state holidays
+- Mass festivals with high visual component (like Diwali, Holi, Eid)
+- Events with viral potential — millions of people doing the same thing simultaneously
+- Bright visuals — colors, costumes, food, decor
+- Family and community traditions
 
-WHAT COUNTS AS SIGNIFICANT:
-- National and state holidays with mass public participation
-- Religious festivals celebrated by large numbers of people (Eid, Diwali, Holi, etc.)
-- Festivals with strong visual potential — colors, costumes, food, decorations, rituals
-- Events where millions of people do the same thing simultaneously
-- Culturally fascinating traditions that would surprise or delight a global audience
+NOT significant:
+- Local regional holidays of small cities
+- Official dates without real public celebration
+- Political and state ceremonies without visual content
 
-WHAT TO SKIP:
-- Small local or regional observances with no visual content potential
-- Official state ceremonies without public participation
-- Political or government events
-- Anything related to conflict, mourning, or controversy
+If no significant holidays found for this week, write: "No significant holidays this week."
 
-For each significant holiday found, write EXACTLY in this format:
-
-==={region_name}===
-
-🗓 [HOLIDAY NAME] — [DATE]
-🌍 [Country or sub-region]
-
-📖 WHAT IS IT:
-[2-3 sentences explaining the holiday — origin, meaning, who celebrates it]
-
-🎨 VISUAL HIGHLIGHTS:
-[Describe colors, costumes, decorations, food, rituals — what would the camera see]
-
-📱 CONTENT POTENTIAL:
-[Why this would perform well on Instagram/Reels — shareability, wow-factor, relatability]
-
-💡 VIDEO IDEA:
-[One specific, concrete video concept for a lifestyle brand]
-
----
-
-[next holiday if exists]
-
-===END===
-
-If no significant holidays found this week, write:
-==={region_name}===
-No significant holidays this week.
-===END===
-
-Start directly with ==={region_name}===. No preamble."""
+Write in Russian."""
 
     response = client.messages.create(
         model="claude-haiku-4-5",
         max_tokens=1500,
-        tools=[{
-            "type": "web_search_20250305",
-            "name": "web_search",
-            "max_uses": 3
-        }],
+        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
         messages=[{"role": "user", "content": prompt}]
     )
 
     result = ""
     for block in response.content:
-        if block.type == "text":
+        if hasattr(block, "text"):
             result += block.text
     return result
 
 
-def parse_region(raw, region_name):
-    lines = raw.splitlines()
-    content = []
-    inside = False
-    for line in lines:
-        if line.strip() == f"==={region_name}===":
-            inside = True
-            continue
-        elif line.strip() == "===END===":
-            inside = False
-            break
-        elif inside:
-            content.append(line)
-    return "\n".join(content).strip()
-
-
-def build_email(india, mena):
-    body = f"""WEEKLY HOLIDAY DIGEST | ПРАЗДНИЧНЫЙ ДАЙДЖЕСТ
-Week: {week_start} – {week_end}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-🇮🇳 INDIA | ИНДИЯ
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{india}
-
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🌍 MENA (Middle East & North Africa) | БЛИЖНИЙ ВОСТОК И СЕВЕРНАЯ АФРИКА
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{mena}
-
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Generated automatically | Сформировано автоматически
-Holiday Digest Agent · Almaty UTC+5 · Every Monday 8:00 AM
-"""
-    return body
-
-
-def send_email(body):
+def send_email(recipient, subject, body):
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"🎉 Holiday Digest — {week_start}–{week_end} | India & MENA"
+    msg["Subject"] = subject
     msg["From"] = GMAIL_USER
-    msg["To"] = RECIPIENT_EMAIL
-
+    msg["To"] = recipient
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-        server.sendmail(GMAIL_USER, RECIPIENT_EMAIL, msg.as_string())
-    print(f"✅ Email sent to {RECIPIENT_EMAIL}")
+        server.sendmail(GMAIL_USER, recipient, msg.as_string())
+    print(f"✅ Email sent to {recipient}")
 
 
-if __name__ == "__main__":
+def main():
     print(f"🔍 Searching holidays for {week_start} – {week_end}...")
 
     print("  → India...")
-    raw_india = get_holidays("INDIA", "India")
-    india = parse_region(raw_india, "INDIA")
+    india = get_holidays("India", "India")
 
     print("  → MENA...")
-    raw_mena = get_holidays("MENA", "the Middle East and North Africa (MENA region)")
-    mena = parse_region(raw_mena, "MENA")
+    mena = get_holidays("MENA", "Middle East and North Africa (MENA region)")
 
-    print("✉️  Building and sending email...")
-    body = build_email(india, mena)
-    send_email(body)
+    print("  → China...")
+    china = get_holidays("China", "China")
+
+    # Email 1: India + MENA → ar1@bafid.com
+    body_india_mena = f"""🌏 HOLIDAY DIGEST — {week_start} – {week_end}
+Праздники Индии и региона MENA на предстоящую неделю
+
+{'='*50}
+🇮🇳 ИНДИЯ
+{'='*50}
+{india}
+
+{'='*50}
+🌙 MENA (Ближний Восток и Северная Африка)
+{'='*50}
+{mena}
+
+---
+Дайджест подготовлен автоматически агентом holiday-digest
+"""
+
+    # Email 2: China → ua@bafid.com
+    body_china = f"""🌏 HOLIDAY DIGEST — {week_start} – {week_end}
+Праздники Китая на предстоящую неделю
+
+{'='*50}
+🇨🇳 КИТАЙ
+{'='*50}
+{china}
+
+---
+Дайджест подготовлен автоматически агентом holiday-digest
+"""
+
+    print("✉️  Building and sending emails...")
+    send_email(RECIPIENT_EMAIL, f"🗓 Holiday Digest: Индия & MENA — {week_start}–{week_end}", body_india_mena)
+    send_email(RECIPIENT_EMAIL_CHINA, f"🗓 Holiday Digest: Китай — {week_start}–{week_end}", body_china)
     print("✅ Done!")
+
+
+if __name__ == "__main__":
+    main()
